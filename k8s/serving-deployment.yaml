@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-serving
+  namespace: ml-training
+  labels:
+    app: model-serving
+    component: serving
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: model-serving
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: model-serving
+        component: serving
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: serve
+          image: mlops-serve:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            # Non-secret settings.
+            - configMapRef:
+                name: serving-config
+            # Optional: create with
+            #   kubectl create secret generic serving-secrets \
+            #     --from-literal=MODEL_API_KEY=... -n ml-training
+            # When absent the service stays open, which is what the curl demo
+            # in Part F expects.
+            - secretRef:
+                name: serving-secrets
+                optional: true
+          # /health returns 200 only once the checkpoint is in memory, so both
+          # probes double as a "model is actually loaded" check.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Read-only: serving must never mutate a training artifact.
+            - name: checkpoints
+              mountPath: /app/checkpoints
+              readOnly: true
+            # readOnlyRootFilesystem needs a writable scratch dir.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: checkpoints
+          persistentVolumeClaim:
+            claimName: ml-checkpoints
+            readOnly: true
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
