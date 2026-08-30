@@ -1,0 +1,19 @@
+# Training dependencies - every version pinned exactly.
+#
+# Install these from PyTorch's CPU wheel index, which both Dockerfiles use as
+# their primary index:
+#   pip install --index-url https://download.pytorch.org/whl/cpu \
+#               --extra-index-url https://pypi.org/simple -r train.txt
+#
+# Plain PyPI would resolve torch 2.11's `cuda-toolkit; platform_system ==
+# "Linux"` dependency - it has no architecture guard, so even on arm64 it adds
+# ~2.4 GB of nvidia-* wheels that no Docker container on this host can use.
+torch==2.11.0
+torchvision==0.26.0
+numpy==2.4.2
+pillow==12.1.1
+PyYAML==6.0.3
+
+# Experiment tracking. Deliberately absent from requirements/serve.txt - the
+# inference image must not carry training-only libraries.
+tensorboard==2.21.0
