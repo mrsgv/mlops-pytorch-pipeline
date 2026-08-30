@@ -1,0 +1,76 @@
+# syntax=docker/dockerfile:1.7
+#
+# Training image - multi-stage.
+#
+# Stage 1 resolves and installs the pinned dependencies into a self-contained
+# virtualenv. Stage 2 copies only that virtualenv, so pip, its HTTP cache and
+# the build metadata never reach the final image, and a source-only change
+# rebuilds just the last three layers.
+
+###############################################################################
+# Stage 1: dependency builder
+###############################################################################
+FROM python:3.11-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# PyTorch's CPU wheel index is the PRIMARY index here. The plain PyPI torch
+# wheel declares `cuda-toolkit; platform_system == "Linux"` with no architecture
+# guard, so it drags ~2.4 GB of nvidia-* wheels (cublas, cudnn, nccl, triton...)
+# into an image that has no GPU to use them. The +cpu builds on this index carry
+# no such dependency. PyPI stays as a fallback for everything else.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
+WORKDIR /app
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# Copied on its own so the (slow) dependency layer is cached independently of src/.
+COPY requirements/train.txt ./train.txt
+RUN pip install --no-cache-dir \
+        --index-url "${TORCH_INDEX_URL}" \
+        --extra-index-url https://pypi.org/simple \
+        -r train.txt
+
+# Turn a silent regression into a build failure: if the index above ever becomes
+# unreachable, pip falls back to PyPI and quietly adds gigabytes of CUDA wheels.
+RUN if pip list --format=freeze | grep -qE '^(nvidia-|triton|cuda-)'; then \
+        echo "ERROR: CUDA packages in a CPU-only image - is ${TORCH_INDEX_URL} reachable?" >&2; \
+        pip list --format=freeze | grep -E '^(nvidia-|triton|cuda-)' >&2; \
+        exit 1; \
+    fi; \
+    python -c "import torch; print('torch', torch.__version__, '| cuda:', torch.version.cuda)"
+
+###############################################################################
+# Stage 2: training runtime
+###############################################################################
+FROM python:3.11-slim AS training
+
+LABEL org.opencontainers.image.title="mlops-train" \
+      org.opencontainers.image.description="PyTorch CIFAR-10 training job" \
+      org.opencontainers.image.source="https://github.com/mrsgv/mlops-pytorch-pipeline"
+
+ENV PATH="/opt/venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    CONFIG_PATH=/app/configs/training_config.yaml \
+    TORCH_HOME=/tmp/torch
+
+COPY --from=builder /opt/venv /opt/venv
+
+# Non-root, with a fixed uid/gid that the Kubernetes securityContext reuses.
+RUN groupadd --gid 1001 mlops \
+ && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin mlops
+
+WORKDIR /app
+COPY --chown=mlops:mlops src/ ./src/
+COPY --chown=mlops:mlops configs/ ./configs/
+
+# Mount points for the dataset and the checkpoint volumes.
+RUN mkdir -p /app/data /app/checkpoints && chown -R mlops:mlops /app
+
+USER mlops
+
+ENTRYPOINT ["python", "src/train.py"]
