@@ -1,0 +1,51 @@
+# Two ConfigMaps:
+#   training-config - the hyperparameter YAML, mounted as a file at
+#                     /app/configs/training_config.yaml in the training Job.
+#   serving-config  - plain key/value settings injected as env vars into the
+#                     serving Deployment.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: training-config
+  namespace: ml-training
+  labels:
+    app: pytorch-training
+data:
+  training_config.yaml: |
+    model:
+      architecture: resnet18
+      num_classes: 10
+      pretrained: false
+    training:
+      epochs: 10
+      batch_size: 64
+      learning_rate: 0.001
+      weight_decay: 0.0001
+      early_stopping_patience: 3
+      early_stopping_min_delta: 0.001
+      device: auto
+      seed: 42
+      max_train_batches: 0
+      max_val_batches: 0
+    data:
+      dataset: cifar10
+      data_dir: /app/data
+      num_workers: 2
+      download: true
+    output:
+      checkpoint_dir: /app/checkpoints
+      model_name: classifier_v1.pt
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: serving-config
+  namespace: ml-training
+  labels:
+    app: model-serving
+data:
+  CHECKPOINT_PATH: /app/checkpoints/classifier_v1.pt
+  SERVE_PORT: "8080"
+  TORCH_NUM_THREADS: "2"
+  TOP_K: "3"
+  LOG_LEVEL: info

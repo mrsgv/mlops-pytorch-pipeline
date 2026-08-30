@@ -1,0 +1,25 @@
+[project]
+name = "mlops-pytorch-pipeline"
+version = "1.0.0"
+description = "Containerised PyTorch training and serving on Kubernetes"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 100
+# The images run 3.11, but the code stays 3.10-compatible (see requires-python).
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "B008",   # FastAPI dependency defaults (Depends/File) are the documented idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning"]

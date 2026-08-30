@@ -1,0 +1,19 @@
+# ClusterIP: reachable inside the cluster, and via `kubectl port-forward` from
+# the laptop. On a cloud cluster switch type to LoadBalancer for a public IP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-serving
+  namespace: ml-training
+  labels:
+    app: model-serving
+    component: serving
+spec:
+  type: ClusterIP
+  selector:
+    app: model-serving
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8080

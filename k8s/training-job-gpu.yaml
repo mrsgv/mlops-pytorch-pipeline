@@ -1,0 +1,89 @@
+# Bonus (Part D): the same training Job requesting one GPU.
+#
+# Requires a GPU node pool and the NVIDIA device plugin. Apply this INSTEAD of
+# k8s/training-job.yaml (both create a Job named pytorch-training):
+#   kubectl delete job pytorch-training -n ml-training --ignore-not-found
+#   kubectl apply -f k8s/training-job-gpu.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pytorch-training
+  namespace: ml-training
+  labels:
+    app: pytorch-training
+    component: training
+    accelerator: nvidia-gpu
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: pytorch-training
+        component: training
+        accelerator: nvidia-gpu
+    spec:
+      restartPolicy: OnFailure
+      # Land only on GPU nodes...
+      nodeSelector:
+        accelerator: nvidia-gpu
+      # ...which are usually tainted so that CPU workloads stay off them.
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: trainer
+          image: mlops-train:v1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CONFIG_PATH
+              value: /app/configs/training_config.yaml
+            - name: TRAIN_DEVICE
+              value: cuda
+            - name: TRAIN_BATCH_SIZE
+              value: "256"
+            - name: TRAIN_NUM_WORKERS
+              value: "4"
+          volumeMounts:
+            - name: config
+              mountPath: /app/configs
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+            - name: checkpoints
+              mountPath: /app/checkpoints
+            # PyTorch needs more than the default 64 MB of /dev/shm once
+            # DataLoader workers start sharing tensors.
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "4"
+              memory: 8Gi
+              nvidia.com/gpu: 1
+      volumes:
+        - name: config
+          configMap:
+            name: training-config
+            items:
+              - key: training_config.yaml
+                path: training_config.yaml
+        - name: data
+          persistentVolumeClaim:
+            claimName: ml-data
+        - name: checkpoints
+          persistentVolumeClaim:
+            claimName: ml-checkpoints
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi

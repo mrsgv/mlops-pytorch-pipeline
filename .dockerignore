@@ -1,0 +1,24 @@
+# Keep the build context small: a 170 MB CIFAR-10 archive or a checkpoint in the
+# context is uploaded to the daemon on every build and invalidates the cache.
+.git
+.github
+.gitignore
+data/
+checkpoints/
+docs/
+tests/
+scripts/
+k8s/
+*.md
+Makefile
+
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+*.pt
+*.pth
+test_image.png
+.env
