@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1.7
+#
+# Serving image - slim, inference dependencies only, non-root, health-checked.
+#
+# requirements/serve.txt has no tensorboard and no training utilities, and
+# configs/ is not copied at all: everything the service needs about the model
+# (architecture, class names, num_classes) is read from the checkpoint itself.
+
+###############################################################################
+# Stage 1: dependency builder
+###############################################################################
+FROM python:3.11-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# See docker/Dockerfile.train: the plain PyPI torch wheel pulls the whole CUDA
+# stack on every Linux platform, aarch64 included. For an inference image that
+# would be ~2.4 GB of unreachable GPU libraries, which is the opposite of "slim".
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
+WORKDIR /app
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+COPY requirements/serve.txt ./serve.txt
+RUN pip install --no-cache-dir \
+        --index-url "${TORCH_INDEX_URL}" \
+        --extra-index-url https://pypi.org/simple \
+        -r serve.txt
+
+RUN if pip list --format=freeze | grep -qE '^(nvidia-|triton|cuda-)'; then \
+        echo "ERROR: CUDA packages in a CPU-only image - is ${TORCH_INDEX_URL} reachable?" >&2; \
+        pip list --format=freeze | grep -E '^(nvidia-|triton|cuda-)' >&2; \
+        exit 1; \
+    fi; \
+    python -c "import torch; print('torch', torch.__version__, '| cuda:', torch.version.cuda)"
+
+###############################################################################
+# Stage 2: serving runtime
+###############################################################################
+FROM python:3.11-slim AS serving
+
+LABEL org.opencontainers.image.title="mlops-serve" \
+      org.opencontainers.image.description="FastAPI inference service for the trained classifier" \
+      org.opencontainers.image.source="https://github.com/mrsgv/mlops-pytorch-pipeline"
+
+ENV PATH="/opt/venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    CHECKPOINT_PATH=/app/checkpoints/classifier_v1.pt \
+    SERVE_HOST=0.0.0.0 \
+    SERVE_PORT=8080 \
+    TORCH_NUM_THREADS=2 \
+    TORCH_HOME=/tmp/torch
+
+COPY --from=builder /opt/venv /opt/venv
+
+RUN groupadd --gid 1001 mlops \
+ && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin mlops
+
+WORKDIR /app
+# serve.py imports model.py and dataset.py so that inference preprocessing is
+# byte-for-byte the validation transform. train.py is not copied.
+COPY --chown=mlops:mlops src/serve.py src/model.py src/dataset.py ./src/
+
+RUN mkdir -p /app/checkpoints && chown -R mlops:mlops /app
+
+USER mlops
+
+EXPOSE 8080
+
+# urllib instead of curl: python:3.11-slim ships no curl and adding one just
+# for a health check would grow the image and its CVE surface. A 503 from
+# /health raises HTTPError, which exits non-zero -> container marked unhealthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8080/health', timeout=4).status == 200 else 1)"
+
+ENTRYPOINT ["python", "src/serve.py"]
