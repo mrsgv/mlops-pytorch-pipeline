@@ -1,0 +1,32 @@
+# Default hyperparameters baked into the training image.
+#
+# In Kubernetes this file is shadowed by the `training-config` ConfigMap that is
+# mounted at /app/configs/training_config.yaml, and any value here can be
+# overridden per-run with a TRAIN_* environment variable (see src/train.py).
+
+model:
+  architecture: resnet18      # resnet18 | simple_cnn
+  num_classes: 10
+  pretrained: false           # keep the container offline
+
+training:
+  epochs: 10
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  early_stopping_patience: 3
+  early_stopping_min_delta: 0.001
+  device: auto                # auto | cpu | cuda | mps
+  seed: 42
+  max_train_batches: 0        # 0 = full epoch; >0 truncates it (smoke runs)
+  max_val_batches: 0
+
+data:
+  dataset: cifar10            # cifar10 | fashion_mnist
+  data_dir: /app/data
+  num_workers: 2
+  download: true
+
+output:
+  checkpoint_dir: /app/checkpoints
+  model_name: classifier_v1.pt
