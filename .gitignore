@@ -1,0 +1,42 @@
+# ---- Datasets & model artifacts (never in git) -------------------------------
+data/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.tar.gz
+runs/
+lightning_logs/
+metrics.jsonl
+training_summary.json
+test_image.png
+
+# ---- Secrets -----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+kubeconfig
+k8s/secret.yaml          # only k8s/secret.example.yaml is tracked
+secrets/
+
+# ---- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Editors & OS ------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ---- Local validation output -------------------------------------------------
+docs/evidence/*.log
