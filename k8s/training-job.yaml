@@ -1,0 +1,111 @@
+# Training Job plus the two PersistentVolumeClaims it needs, so that a single
+#   kubectl apply -f k8s/training-job.yaml
+# creates storage and workload together.
+#
+# storageClassName is intentionally omitted: the cluster's default class is used
+# (hostpath on Docker Desktop, standard on Minikube/kind).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-data
+  namespace: ml-training
+  labels:
+    app: pytorch-training
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-checkpoints
+  namespace: ml-training
+  labels:
+    app: pytorch-training
+spec:
+  # ReadWriteOnce is enough for a single-node cluster where the training Job and
+  # the serving pods land on the same node. On a multi-node cluster switch this
+  # to ReadWriteMany (NFS/EFS/Filestore) so serving can mount it read-only.
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pytorch-training
+  namespace: ml-training
+  labels:
+    app: pytorch-training
+    component: training
+spec:
+  backoffLimit: 2
+  completions: 1
+  parallelism: 1
+  template:
+    metadata:
+      labels:
+        app: pytorch-training
+        component: training
+    spec:
+      restartPolicy: OnFailure
+      # Matches the uid/gid baked into docker/Dockerfile.train; fsGroup makes the
+      # PVC mounts group-writable for that non-root user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: trainer
+          image: mlops-train:v1
+          # The image is built straight into the local Docker/containerd store,
+          # so never try to pull it from a registry.
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CONFIG_PATH
+              value: /app/configs/training_config.yaml
+            # Fast-demo overrides so a CPU-only node finishes in minutes. The
+            # ConfigMap remains the source of truth for everything else; delete
+            # these two entries (or set them to 0) for the full 10-epoch run.
+            - name: TRAIN_EPOCHS
+              value: "3"
+            - name: TRAIN_MAX_TRAIN_BATCHES
+              value: "120"
+            - name: TRAIN_MAX_VAL_BATCHES
+              value: "40"
+            - name: TRAIN_NUM_WORKERS
+              value: "2"
+          volumeMounts:
+            - name: config
+              mountPath: /app/configs
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+            - name: checkpoints
+              mountPath: /app/checkpoints
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      volumes:
+        - name: config
+          configMap:
+            name: training-config
+            items:
+              - key: training_config.yaml
+                path: training_config.yaml
+        - name: data
+          persistentVolumeClaim:
+            claimName: ml-data
+        - name: checkpoints
+          persistentVolumeClaim:
+            claimName: ml-checkpoints

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ml-training
+  labels:
+    project: mlops-pytorch-pipeline
+    owner: da25m631
